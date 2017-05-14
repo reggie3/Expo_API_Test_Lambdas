@@ -27,23 +27,20 @@ exports.handler = (event, context, callback) => {
     // In this example, the token is treated as the status for simplicity.
     switch (auth.service) {
         case 'google':
-            let googleVerificationResults = verifyGoogleToken(auth, callback);
+            verifyGoogleToken(auth, callback, event);
             break;
         case 'facebook':
-            let facebookVerificationResults = verifyFacebookToken(auth, callback);
-            console.log('********************');
-            console.log({ facebookVerificationResults });
-            callback(null, generatePolicy('user', 'Allow', event.methodArn));
+            verifyFacebookToken(auth, callback, event);
             break;
         default:
-                callback("Error: Invalid authenticatin service");
+            callback("Error: Invalid authenticatin service");
             break;
 
     }
 };
 
 // based on "Inspecting Access Tokens" from here: https://developers.facebook.com/docs/facebook-login/manually-build-a-login-flow#checktoken
-let verifyFacebookToken = (auth, callback) => {
+let verifyFacebookToken = (auth, callback, event) => {
     return new Promise(function (resolve, reject) {
         fetch(`https://graph.facebook.com/debug_token?input_token=${auth.accessToken}&access_token=${auth.accessToken}`, {
             method: 'GET'
@@ -75,7 +72,7 @@ let verifyFacebookToken = (auth, callback) => {
 }
 
 // based on "OAUTH 2.0 ENDPOINTS" Complete Example from here: https://developers.google.com/identity/protocols/OAuth2UserAgent#validate-access-token
-let verifyGoogleToken = (auth, callback) => {
+let verifyGoogleToken = (auth, callback, event) => {
     return new Promise(function (resolve, reject) {
         fetch(`https://www.googleapis.com/oauth2/v3/tokeninfo?&access_token=${auth.accessToken}`, {
             method: 'POST'
@@ -91,6 +88,7 @@ let verifyGoogleToken = (auth, callback) => {
                 // This check is necessary to prevent ID tokens issued to a malicious app being used to access data about the same user on your app's backend server.
                 if ((json.aud !== googleOauth2AndroidClientID) && (json.aud !== googleOauth2iOSClientID)) {
                     callback(null, generatePolicy('user', 'Deny', event.methodArn));
+                    console.log('aud mismatch');
                     resolve({
                         type: 'error',
                         msg: 'aud mismatch'
@@ -98,6 +96,7 @@ let verifyGoogleToken = (auth, callback) => {
                 }
                 // check to see if the user ID and the sub value match
                 else if (json.sub !== auth.id) {
+                    console.log('ID mismatch');
                     callback(null, generatePolicy('user', 'Deny', event.methodArn));
                     resolve({
                         type: 'error',
@@ -106,7 +105,8 @@ let verifyGoogleToken = (auth, callback) => {
                 }
                 // The expiry time (exp) of the ID token has not passed.
                 // if so, get a refresh token
-                else if (json.expires_in >= 0) {
+                else if (json.expires_in <= 0) {
+                    console.log('token expired');
                     callback(null, generatePolicy('user', 'Deny', event.methodArn));
                     resolve({
                         type: 'error',
@@ -114,18 +114,14 @@ let verifyGoogleToken = (auth, callback) => {
                     })
                 }
                 else {
+                    console.log('token valid');
                     callback(null, generatePolicy('user', 'Allow', event.methodArn));
                     resolve({
                         type: 'success',
                         msg: 'valid token'
                     })
                 }
-
             })
-            .catch(function (error) {
-                console.log("in catch +++++++")
-                callback(null, generatePolicy('user', 'Deny', event.methodArn));
-            });
     });
 }
 
