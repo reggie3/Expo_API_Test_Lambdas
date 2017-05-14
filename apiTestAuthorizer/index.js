@@ -33,7 +33,7 @@ exports.handler = (event, context, callback) => {
             verifyFacebookToken(auth, callback, event);
             break;
         default:
-            callback("Error: Invalid authenticatin service");
+            callback("Error: Invalid authentication service");
             break;
 
     }
@@ -41,8 +41,13 @@ exports.handler = (event, context, callback) => {
 
 // based on "Inspecting Access Tokens" from here: https://developers.facebook.com/docs/facebook-login/manually-build-a-login-flow#checktoken
 let verifyFacebookToken = (auth, callback, event) => {
+    console.log("^^^^^^^^^^^^^^^^^^ Inside verifyFacebook Token ^^^^^^^^^^^^^^^^^^^^");
+    console.log(util.inspect(auth, { showHidden: true, depth: null }));
+
     return new Promise(function (resolve, reject) {
-        fetch(`https://graph.facebook.com/debug_token?input_token=${auth.accessToken}&access_token=${auth.accessToken}`, {
+        // Using https://developers.facebook.com/docs/facebook-login/manually-build-a-login-flow#checktoken
+        // Also, using alternative app access token method in "Note"" on page
+        fetch(`https://graph.facebook.com/v2.9/debug_token?input_token=${auth.accessToken}&access_token=${facebookAppID}|${facebookClientSecret}`, {
             method: 'GET'
         })
             .then((response) => {
@@ -50,23 +55,24 @@ let verifyFacebookToken = (auth, callback, event) => {
             })
             .then((json) => {
                 console.log('***** verifyFacebookToken response ***');
-
-                if (json.hasOwnProperty('error')) {
-                    reject({
+                console.log(util.inspect(json, { showHidden: true, depth: null }));
+                if(!json.data.is_valid){
+                     callback(null, generatePolicy('user', 'Deny', event.methodArn));
+                    console.log('invalid Facebook token');
+                    resolve({
                         type: 'error',
-                    });
+                        msg: 'invalid Facebook token'
+                    })
                 }
-                resolve(resolve({
-                    type: 'success',
-                }));
+                else {
+                    console.log('token valid');
+                    callback(null, generatePolicy('user', 'Allow', event.methodArn));
+                    resolve({
+                        type: 'success',
+                        msg: 'valid token'
+                    })
+                }
             })
-            .catch(function (error) {
-                console.log('Request failed', error);
-                reject({
-                    type: 'error',
-                    msg: 'failed to verify facebook access token'
-                });
-            });
     });
 
 }
