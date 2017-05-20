@@ -1,6 +1,6 @@
 ﻿# Expo API Test Lambdas
 
-##Lambda functions for use with the [Expo_API_Test](https://github.com/reggie3/Expo_API_Test) repo
+## Lambda functions for use with the [Expo_API_Test](https://github.com/reggie3/Expo_API_Test) repo
 
 There are 3 branches the correspond to the branches of the [Expo API Test repo]((https://github.com/reggie3/Expo_API_Test)
 
