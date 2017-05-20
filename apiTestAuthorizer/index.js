@@ -1,12 +1,16 @@
 'use strict';
 var util = require('util');    // util enables deep looks into an object
-var fetch = require('node-fetch');
+// var fetch = require('node-fetch'); this now breaks the lambda because fetch is already defined
+var jwt = require('jsonwebtoken');
 
 console.log('Loading function');
 const facebookClientSecret = process.env.facebookClientSecret;
 const facebookAppID = process.env.facebookAppID;
 const googleOauth2AndroidClientID = process.env.googleOauth2AndroidClientID;
 const googleOauth2iOSClientID = process.env.googleOauth2iOSClientID;
+const auth0Domain = process.env.auth0Domain;
+const auth0ClientSecret = process.env.auth0ClientSecret;
+const auth0ClientID = process.env.auth0ClientID;
 
 exports.handler = (event, context, callback) => {
     // console.log(util.inspect(event, { showHidden: true, depth: null }));
@@ -32,6 +36,9 @@ exports.handler = (event, context, callback) => {
         case 'facebook':
             verifyFacebookToken(auth, callback, event);
             break;
+        case 'auth0':
+            verifyAuth0Token(auth, callback, event);
+            break;
         default:
             callback("Error: Invalid authentication service");
             break;
@@ -39,96 +46,113 @@ exports.handler = (event, context, callback) => {
     }
 };
 
+// built using combination of https://auth0.com/docs/tokens/access-token 
+// and https://www.npmjs.com/package/jsonwebtoken
+let verifyAuth0Token = (auth, callback, event) => {
+    console.log("^^^^^^^^^^^^^^^^^^ Inside verifyAuth0Token Token ^^^^^^^^^^^^^^^^^^^^");
+    console.log(util.inspect(auth, { showHidden: true, depth: null }));
+    var decoded = jwt.verify(auth.accessToken, auth0ClientSecret, {
+        audience: auth0ClientID,
+        issuer: `https://${auth0Domain}/`,
+        subject: auth.id
+    }, function (err, decoded) {
+        if (err) {
+            console.log(util.inspect(err, { showHidden: true, depth: null }));
+            callback(null, generatePolicy('user', 'Deny', event.methodArn));
+        }
+        else {
+            console.log(util.inspect(decoded, { showHidden: true, depth: null }));
+            callback(null, generatePolicy('user', 'Allow', event.methodArn));
+        }
+    });
+    console.log(decoded);
+}
+
 // based on "Inspecting Access Tokens" from here: https://developers.facebook.com/docs/facebook-login/manually-build-a-login-flow#checktoken
 let verifyFacebookToken = (auth, callback, event) => {
     console.log("^^^^^^^^^^^^^^^^^^ Inside verifyFacebook Token ^^^^^^^^^^^^^^^^^^^^");
     console.log(util.inspect(auth, { showHidden: true, depth: null }));
 
-    return new Promise(function (resolve, reject) {
-        // Using https://developers.facebook.com/docs/facebook-login/manually-build-a-login-flow#checktoken
-        // Also, using alternative app access token method in "Note"" on page
-        fetch(`https://graph.facebook.com/v2.9/debug_token?input_token=${auth.accessToken}&access_token=${facebookAppID}|${facebookClientSecret}`, {
-            method: 'GET'
+    return fetch(`https://graph.facebook.com/v2.9/debug_token?input_token=${auth.accessToken}&access_token=${facebookAppID}|${facebookClientSecret}`, {
+        method: 'GET'
+    })
+        .then((response) => {
+            return response.json();
         })
-            .then((response) => {
-                return response.json();
-            })
-            .then((json) => {
-                console.log('***** verifyFacebookToken response ***');
-                console.log(util.inspect(json, { showHidden: true, depth: null }));
-                if(!json.data.is_valid){
-                     callback(null, generatePolicy('user', 'Deny', event.methodArn));
-                    console.log('invalid Facebook token');
-                    resolve({
-                        type: 'error',
-                        msg: 'invalid Facebook token'
-                    })
-                }
-                else {
-                    console.log('token valid');
-                    callback(null, generatePolicy('user', 'Allow', event.methodArn));
-                    resolve({
-                        type: 'success',
-                        msg: 'valid token'
-                    })
-                }
-            })
-    });
+        .then((json) => {
+            console.log('***** verifyFacebookToken response ***');
+            console.log(util.inspect(json, { showHidden: true, depth: null }));
+            if (!json.data.is_valid) {
+                callback(null, generatePolicy('user', 'Deny', event.methodArn));
+                console.log('invalid Facebook token');
+                return ({
+                    type: 'error',
+                    msg: 'invalid Facebook token'
+                })
+            }
+            else {
+                console.log('token valid');
+                callback(null, generatePolicy('user', 'Allow', event.methodArn));
+                return ({
+                    type: 'success',
+                    msg: 'valid token'
+                })
+            }
+        })
 
 }
 
 // based on "OAUTH 2.0 ENDPOINTS" Complete Example from here: https://developers.google.com/identity/protocols/OAuth2UserAgent#validate-access-token
 let verifyGoogleToken = (auth, callback, event) => {
-    return new Promise(function (resolve, reject) {
-        fetch(`https://www.googleapis.com/oauth2/v3/tokeninfo?&access_token=${auth.accessToken}`, {
-            method: 'POST'
+    return fetch(`https://www.googleapis.com/oauth2/v3/tokeninfo?&access_token=${auth.accessToken}`, {
+        method: 'POST'
+    })
+        .then((response) => {
+            return response.json();
         })
-            .then((response) => {
-                return response.json();
-            })
-            .then((json) => {
-                console.log('***** verifyGoogleToken response ***');
-                console.log(util.inspect(json, { showHidden: true, depth: null }));
-                // from https://developers.google.com/identity/sign-in/web/backend-auth ensure the following items
-                // The value of aud in the ID token is equal to one of your app's client IDs. 
-                // This check is necessary to prevent ID tokens issued to a malicious app being used to access data about the same user on your app's backend server.
-                if ((json.aud !== googleOauth2AndroidClientID) && (json.aud !== googleOauth2iOSClientID)) {
-                    callback(null, generatePolicy('user', 'Deny', event.methodArn));
-                    console.log('aud mismatch');
-                    resolve({
-                        type: 'error',
-                        msg: 'aud mismatch'
-                    })
-                }
-                // check to see if the user ID and the sub value match
-                else if (json.sub !== auth.id) {
-                    console.log('ID mismatch');
-                    callback(null, generatePolicy('user', 'Deny', event.methodArn));
-                    resolve({
-                        type: 'error',
-                        msg: 'ID mismatch'
-                    })
-                }
-                // The expiry time (exp) of the ID token has not passed.
-                // if so, get a refresh token
-                else if (json.expires_in <= 0) {
-                    console.log('token expired');
-                    callback(null, generatePolicy('user', 'Deny', event.methodArn));
-                    resolve({
-                        type: 'error',
-                        msg: 'token expired'
-                    })
-                }
-                else {
-                    console.log('token valid');
-                    callback(null, generatePolicy('user', 'Allow', event.methodArn));
-                    resolve({
-                        type: 'success',
-                        msg: 'valid token'
-                    })
-                }
-            })
-    });
+        .then((json) => {
+            console.log('***** verifyGoogleToken response ***');
+            console.log(util.inspect(json, { showHidden: true, depth: null }));
+            // from https://developers.google.com/identity/sign-in/web/backend-auth ensure the following items
+            // The value of aud in the ID token is equal to one of your app's client IDs. 
+            // This check is necessary to prevent ID tokens issued to a malicious app being used to access data about the same user on your app's backend server.
+            if ((json.aud !== googleOauth2AndroidClientID) && (json.aud !== googleOauth2iOSClientID)) {
+                callback(null, generatePolicy('user', 'Deny', event.methodArn));
+                console.log('aud mismatch');
+                return ({
+                    type: 'error',
+                    msg: 'aud mismatch'
+                })
+            }
+            // check to see if the user ID and the sub value match
+            else if (json.sub !== auth.id) {
+                console.log('ID mismatch');
+                callback(null, generatePolicy('user', 'Deny', event.methodArn));
+                return ({
+                    type: 'error',
+                    msg: 'ID mismatch'
+                })
+            }
+            // The expiry time (exp) of the ID token has not passed.
+            // if so, get a refresh token
+            else if (json.expires_in <= 0) {
+                console.log('token expired');
+                callback(null, generatePolicy('user', 'Deny', event.methodArn));
+                return ({
+                    type: 'error',
+                    msg: 'token expired'
+                })
+            }
+            else {
+                console.log('token valid');
+                callback(null, generatePolicy('user', 'Allow', event.methodArn));
+                return ({
+                    type: 'success',
+                    msg: 'valid token'
+                })
+            }
+        })
+
 }
 
 var generatePolicy = function (principalId, effect, resource) {
